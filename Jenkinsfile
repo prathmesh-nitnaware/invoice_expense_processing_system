@@ -112,7 +112,7 @@ pipeline {
                         }
                     }
 
-                    $venvPython = Join-Path (Get-Location).Path "venv\Scripts\python.exe"
+                    $venvPython = Join-Path (Get-Location).Path "venv/Scripts/python.exe"
                     if (-not (Test-Path $venvPython)) {
                         throw "Virtual environment python executable not found at: $venvPython"
                     }
@@ -167,7 +167,7 @@ pipeline {
                 echo "--> [Stage 5] Executing 14 automated pytest business & security scenarios..."
                 powershell '''
                     $ErrorActionPreference = 'Stop'
-                    $venvPython = Join-Path (Get-Location).Path "venv\Scripts\python.exe"
+                    $venvPython = Join-Path (Get-Location).Path "venv/Scripts/python.exe"
                     $env:PYTHONPATH = (Get-Location).Path
 
                     Write-Host "Executing pytest suite with JUnit XML reporting..."
@@ -217,7 +217,7 @@ pipeline {
                 echo "--> [Stage 7] Generating Python test coverage report (coverage.xml)..."
                 powershell '''
                     $ErrorActionPreference = 'Stop'
-                    $venvPython = Join-Path (Get-Location).Path "venv\Scripts\python.exe"
+                    $venvPython = Join-Path (Get-Location).Path "venv/Scripts/python.exe"
                     $env:PYTHONPATH = (Get-Location).Path
 
                     Write-Host "Generating test coverage with pytest-cov..."
