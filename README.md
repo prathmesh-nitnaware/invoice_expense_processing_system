@@ -1,273 +1,179 @@
-# AI-Powered Invoice and Expense Processing System
+# AI-Powered Invoice & Expense Processing System
 
-A production-grade business automation application built for small businesses, accounting firms, and agencies. The system automates end-to-end invoice processing: uploading invoice PDFs, extracting key financial data using Gemini API with PyMuPDF and Tesseract OCR fallback, validating data against arithmetic and duplicate rules, providing human review and correction workflows, and generating executive Excel expense reports.
+A production-grade business automation and DevOps-enabled financial processing platform built for small businesses, accounting firms, and agencies. The system automates end-to-end invoice processing: PDF ingestion, hybrid OCR and Gemini AI extraction, financial validation, human review workflows, and multi-sheet Excel reporting, backed by a comprehensive enterprise DevOps toolchain (Jenkins, SonarQube, Trivy, Docker, Prometheus, Grafana, and Nginx).
 
 ---
 
-## 1. Key Features
+## 1. System Architecture
 
-- **Multi-File PDF Ingestion**:
-  - Drag-and-drop support for single or batch PDF uploads.
-  - Automatic validation of file extensions and file size limits (default 15MB).
-  - Pre-flight checks for corrupted, empty (0 bytes / 0 pages), and password-protected PDFs.
-  - SHA-256 content hashing to detect and block accidental duplicate uploads.
+```
+ ┌────────────────────────────────────────────────────────────────────────────────────────┐
+ │                              Client Browser / API Consumers                            │
+ └───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                             │ HTTP / HTTPS (Port 80 / 3000)
+                                             ▼
+ ┌────────────────────────────────────────────────────────────────────────────────────────┐
+ │                                Nginx Reverse Proxy (Port 80)                           │
+ │     - Client Max Body: 25M (PDFs)   - Gzip Compression   - Correlation ID Tracking     │
+ └─────────────────────┬───────────────────────────────────────────────────┬──────────────┘
+                       │ / (Frontend UI)                                   │ /api/, /metrics
+                       ▼                                                   ▼
+ ┌──────────────────────────────────────────────┐        ┌────────────────────────────────┐
+ │        React 18 + Vite (Port 80)             │        │    FastAPI Backend (Port 8000) │
+ │  - Dashboard & Analytics                     │        │  - PDF Pipeline (PyMuPDF)      │
+ │  - Upload Zone with Hash Duplicate Check     │        │  - OCR Rasterizer (Tesseract)  │
+ │  - Side-by-Side Review & Corrections         │        │  - Gemini Structured AI        │
+ │  - Excel Expense Reports Generator           │        │  - Validation Rules Engine     │
+ │  - System Status & Configuration             │        │  - Prometheus /metrics Exposer │
+ └──────────────────────────────────────────────┘        └──────────────┬─────────────────┘
+                                                                        │ SQLAlchemy 2.0
+                                                                        ▼
+ ┌──────────────────────────────────────────────┐        ┌────────────────────────────────┐
+ │               Persistent Storage             │        │     PostgreSQL 16 Database     │
+ │  - /storage/invoices (Secure PDF store)      │        │  - Invoices & Line Items       │
+ │  - /storage/reports  (Generated Workbooks)   │        │  - Vendors & Audit Logs        │
+ └──────────────────────────────────────────────┘        └────────────────────────────────┘
 
-- **Intelligent Financial Extraction Pipeline**:
-  - **PyMuPDF (`fitz`)**: Fast digital text and metadata extraction.
-  - **Tesseract OCR Fallback**: Automatically rasterizes pages and runs OCR when digital text is sparse or document is scanned.
-  - **Gemini API Integration**: Uses strict structured JSON prompt and Pydantic schemas to extract:
-    - Vendor Name
-    - Invoice Number
-    - Invoice Date & Due Date
-    - Customer / Billed Entity
-    - Subtotal, Tax Amount, Tax Rate %
-    - Total Invoice Amount
-    - Currency & Payment Status
-    - Line Items & Confidence Score
-  - **Deterministic Demo Mode**: Seamless fallback parser if `GEMINI_API_KEY` is not set, explicitly labeled so demo data is never disguised as real AI.
-  - **Data Integrity**: Original extracted text is preserved; user corrections are tracked with field-level diffs and audit logs.
-
-- **Automated Validation Rules Engine**:
-  - Required fields check (Vendor Name, Invoice Number, Invoice Date, Total Amount).
-  - Date format parsing and Chronological sanity check (Due Date must not precede Invoice Date).
-  - Arithmetic consistency verification: Subtotal + Tax = Total within configurable tolerance (`±$0.05`).
-  - Cross-invoice duplicate detection for matching Vendor + Invoice Number.
-  - Non-destructive flagging: Invoices with issues are marked `FLAGGED` for human review rather than prematurely rejected.
-
-- **Human-in-the-Loop Review & Approval Interface**:
-  - Interactive split review screen: view original document text alongside editable form fields.
-  - Visual badges indicating AI extraction confidence and human-modified fields.
-  - Real-time recalculation of validation rules upon saving field corrections.
-  - One-click Approve, Reject, or Reprocess actions with audit notes.
-
-- **Executive Analytics Dashboard**:
-  - Real-time KPI summary cards: Total Invoices Processed, Total Approved Expenses, Pending Review, Flagged.
-  - Monthly expenditure volume and expenditure distribution trends.
-  - Top vendor concentration analysis with percentage progress bars.
-  - Recent invoices register with fast navigation to Review or Audit Details.
-
-- **Multi-Sheet Excel Expense Reporting**:
-  - Export formatted `.xlsx` workbooks using `pandas` and `openpyxl`.
-  - Configurable filters: Date Range (From/To), Vendor Name, and "Approved Only" toggle.
-  - **Sheet 1 (Executive Summary)**: KPI metrics, filter boundaries, and vendor expense share table.
-  - **Sheet 2 (Detailed Invoices)**: Complete audit register with currency cell formatting and color-coded status pills.
+ ================================= DEVOPS TOOLCHAIN ========================================
+ ┌───────────────────────┐  ┌───────────────────────┐  ┌───────────────────────┐  ┌───────┐
+ │ Jenkins CI/CD (8080)  │  │ SonarQube QG (9000)   │  │ Prometheus (9090)     │  │Grafana│
+ │ 15-Stage Pipeline     │  │ Code Quality Analysis │  │ Metric Scraper        │  │(3001) │
+ └───────────────────────┘  └───────────────────────┘  └───────────────────────┘  └───────┘
+```
 
 ---
 
 ## 2. Technology Stack
 
-- **Frontend**: React 18, Vite, JavaScript, Tailwind CSS, Lucide Icons
-- **Backend**: Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2.0, Uvicorn
-- **Database**: PostgreSQL 16 (with SQLite auto-fallback for zero-dependency local dev/testing)
+### Application Layer
+- **Frontend**: React 18, Vite, JavaScript, Tailwind CSS, Lucide Icons.
+- **Backend**: Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2.0, Uvicorn.
+- **Database**: PostgreSQL 16 Alpine (with automatic zero-config SQLite fallback for local test execution).
 - **Document & AI Processing**:
-  - Google Gemini API (`google-generativeai`)
-  - PyMuPDF (`fitz`) v2.0
-  - Tesseract OCR (`pytesseract`) + Pillow
-  - Pandas & OpenPyXL
-- **Infrastructure**: Docker, Docker Compose, Nginx
+  - `PyMuPDF` (`fitz`) v2.0 for native digital text extraction.
+  - `Tesseract OCR` (`pytesseract` + Pillow) for scanned image-based invoices.
+  - `Google Gemini API` (`google-generativeai`) with structured JSON schema enforcement.
+  - *Deterministic Demo Mode*: Seamless automatic fallback if `GEMINI_API_KEY` is not provided.
+  - `pandas` & `openpyxl` for multi-sheet Excel reports.
+
+### DevOps & Infrastructure Toolchain
+- **CI/CD Orchestration**: Jenkins (Declarative Pipeline with 15 stages), GitHub Actions (PR Validation).
+- **Containerization**: Docker, Multi-Stage Hardened Dockerfiles, Non-Root Users (`appuser:10001`).
+- **Orchestration**: Docker Compose with profiles for Core App, Local Development, and DevOps Stack.
+- **Code Quality & Static Analysis**: SonarQube with coverage reporting via `pytest-cov`.
+- **Security Scanning**: Trivy (Filesystem, CVE Dependency, and Container Image scanning).
+- **Observability & Monitoring**: Prometheus (`/metrics` scraping), Grafana (Pre-provisioned dashboards), Structured Logging with `X-Correlation-ID`.
+- **Reverse Proxy**: Nginx with rate/size limits (`25M`), security headers, and request routing.
 
 ---
 
-## 3. Architecture Overview
+## 3. Quickstart: Running with Docker
 
-```
-                        ┌──────────────────────────────────────────────┐
-                        │        React + Vite Frontend (Port 3000)     │
-                        │  Dashboard | Upload | Review | Reports       │
-                        └──────────────────────┬───────────────────────┘
-                                               │ HTTP / REST API
-                                               ▼
-                        ┌──────────────────────────────────────────────┐
-                        │         FastAPI Backend (Port 8000)          │
-                        ├──────────────────────────────────────────────┤
-                        │  - Security: Extension, Size & Hash check    │
-                        │  - Extraction Pipeline:                      │
-                        │      1. PyMuPDF (Digital Text)               │
-                        │      2. Tesseract OCR (Scanned raster fallback)
-                        │      3. Gemini API / Deterministic Parser    │
-                        │      4. Pydantic Schema Validation           │
-                        │  - Validation Engine:                        │
-                        │      - Math consistency (Subtotal+Tax=Total) │
-                        │      - Date validation & Duplicates check    │
-                        │  - Reporting Service: Pandas + OpenPyXL      │
-                        └──────────────┬────────────────────────┬──────┘
-                                       │                        │
-                      SQLAlchemy 2.0   │                        │ File Storage
-                                       ▼                        ▼
-                        ┌────────────────────────┐   ┌─────────────────┐
-                        │ PostgreSQL Database    │   │ /storage        │
-                        │ Invoices, Vendors,     │   │ - invoices/     │
-                        │ Line Items, Audit Logs │   │ - reports/      │
-                        └────────────────────────┘   └─────────────────┘
-```
-
----
-
-## 4. Quickstart with Docker Compose
-
-### Prerequisites
-- Docker Engine 20+ and Docker Compose
-
-### 1. Clone & Set Environment
+### A. Core Application (Production Mode)
+Starts PostgreSQL, Backend, Frontend, and Nginx Reverse Proxy:
 ```bash
-git clone <repository_url>
-cd demo
+# 1. Clone & prepare environment
 cp .env.example .env
-```
 
-*(Optional)* Set your Google Gemini API key in `.env`:
-```env
-GEMINI_API_KEY=your_gemini_api_key_here
+# 2. Launch application stack
+docker compose up -d --build
 ```
-> If no API key is set, the application runs automatically in **Deterministic Demo Mode** with realistic rule-based parsing.
+Access points:
+- **Application Web UI**: [http://localhost](http://localhost) or [http://localhost:3000](http://localhost:3000)
+- **Backend API Docs (Swagger)**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Liveness Probe**: [http://localhost/health](http://localhost/health)
+- **Readiness Probe**: [http://localhost/ready](http://localhost/ready)
+- **Prometheus Metrics**: [http://localhost/metrics](http://localhost/metrics)
 
-### 2. Run the Application
+### B. Local Development Mode (Live Hot-Reloading)
+Mounts source code into containers for real-time changes without rebuilding:
 ```bash
-docker compose up --build
+docker compose -f docker-compose.dev.yml up -d
 ```
 
-### 3. Access Services
-- **Web Application**: [http://localhost:3000](http://localhost:3000)
-- **API Documentation (Swagger UI)**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **API Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
+### C. DevOps & Monitoring Stack (Optional Tools)
+Launches Jenkins, SonarQube, Prometheus, and Grafana:
+```bash
+docker compose -f docker-compose.devops.yml up -d
+```
+Access points:
+- **Jenkins Controller**: [http://localhost:8080](http://localhost:8080)
+- **SonarQube Quality Gate**: [http://localhost:9000](http://localhost:9000)
+- **Prometheus Metric Explorer**: [http://localhost:9090](http://localhost:9090)
+- **Grafana Performance Dashboards**: [http://localhost:3001](http://localhost:3001) *(admin / admin)*
 
 ---
 
-## 5. Local Development Setup (Without Docker)
+## 4. CI/CD Pipeline Stages (Jenkinsfile)
 
-### Prerequisites
-- Python 3.10+
-- Node.js 18+ and npm
+The root `Jenkinsfile` implements a production-grade 15-stage declarative pipeline:
 
-### 1. Backend Setup
-```bash
-# Create and activate virtual environment
-python -m venv venv
-# Windows:
-.\venv\Scripts\activate
-# Linux/macOS:
-source venv/bin/activate
+| # | Stage Name | Description | Failure Behavior |
+|---|---|---|---|
+| **1** | `Checkout` | Retrieves Git source revision cleanly. | Abort build |
+| **2** | `Environment Validation` | Verifies Docker, Python, Node, and compose CLI availability. | Abort build |
+| **3** | `Backend Dependencies` | Installs Python requirements in an isolated virtual environment. | Abort build |
+| **4** | `Frontend Dependencies` | Installs npm dependencies using `npm ci`. | Abort build |
+| **5** | `Backend Automated Tests` | Runs 14 pytest business scenarios with JUnit XML output. | Abort build |
+| **6** | `Frontend Build & Tests` | Compiles Vite production bundle into `dist/`. | Abort build |
+| **7** | `Coverage Generation` | Computes test coverage and produces `coverage.xml`. | Abort build |
+| **8** | `SonarQube Analysis` | Dispatches static code analysis to SonarQube. | Log warning / proceed |
+| **9** | `SonarQube Quality Gate` | Evaluates coverage, bugs, and security vulnerabilities. | Abort build on failure |
+| **10**| `Trivy Filesystem Scan` | Scans workspace files and packages for high/critical CVEs. | Log report |
+| **11**| `Docker Image Build` | Builds multi-stage non-root container images. | Abort build |
+| **12**| `Trivy Container Scan` | Inspects container images for OS-level vulnerabilities. | Block push on Critical |
+| **13**| `Docker Image Tagging` | Tags images with semantic build tag and `latest`. | Abort build |
+| **14**| `Docker Hub Push` | Pushes images to registry using secure Jenkins credentials. | Abort build |
+| **15**| `Deployment` | Staging deploy (feature branch) or **Human Approval Gate** for Prod. | Abort if unapproved |
 
-# Install dependencies
-pip install -r backend/requirements.txt
-
-# Start backend server (defaults to local SQLite if PostgreSQL is not active)
-python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 2. Frontend Setup
-In a separate terminal window:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+For setup instructions, see [docs/DEVOPS_SETUP.md](docs/DEVOPS_SETUP.md) and [docs/CI_CD_WORKFLOW.md](docs/CI_CD_WORKFLOW.md).
 
 ---
 
-## 6. Environment Variables Reference
+## 5. Security & Vulnerability Scanning
 
-| Variable | Default Value | Description |
-|---|---|---|
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/invoice_db` | Relational database connection string. (Falls back to SQLite if unreachable). |
-| `GEMINI_API_KEY` | `""` | Google Gemini API key. If omitted, demo mode is used. |
-| `GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model name for extraction. |
-| `DEMO_MODE` | `false` | When `true`, activates deterministic rule-based extractor. |
-| `MAX_UPLOAD_SIZE_MB`| `15` | Maximum upload size allowed per PDF invoice. |
-| `TOTAL_TOLERANCE` | `0.05` | Allowed difference between Subtotal + Tax and Total. |
-| `TESSERACT_CMD` | `""` | Custom path to `tesseract` binary (if not in system PATH). |
+### Trivy Security Scans
+```bash
+# Scan repository filesystem
+trivy fs --severity HIGH,CRITICAL --format table .
+
+# Scan built Docker images
+trivy image --severity HIGH,CRITICAL prathmeshnitnaware/invoice-expense-system-backend:latest
+```
+
+### Non-Root Container Execution
+Both backend and frontend containers run as unprivileged users (`appuser:10001` and `nginx`) with read-only root filesystems where appropriate, blocking host privilege escalation.
 
 ---
 
-## 7. API Reference
+## 6. Observability, Health & Monitoring
 
-### Invoices API (`/api/v1/invoices`)
+### Metrics (`/metrics`)
+The application exposes Prometheus-compatible metrics:
+- `http_requests_total`: Counter by handler, method, and HTTP status code.
+- `http_request_duration_seconds`: Response latency histogram (p50, p95, p99).
+- `process_resident_memory_bytes`: Physical memory usage in MB.
+- `process_cpu_seconds_total`: CPU consumption rate.
 
-- `POST /upload`  
-  Uploads single or multiple PDF invoices. Extracts data, runs validation rules, and saves records.  
-  *Payload*: `multipart/form-data` with `files` field.
-
-- `GET /`  
-  Lists invoices with pagination and filters.  
-  *Query Parameters*: `page`, `page_size`, `search`, `status`, `vendor_name`, `start_date`, `end_date`, `min_amount`, `max_amount`.
-
-- `GET /{id}`  
-  Returns full invoice record, line items, and audit history.
-
-- `PATCH /{id}`  
-  Applies human corrections to fields (`vendor_name`, `invoice_number`, `invoice_date`, `subtotal`, `tax_amount`, `total_amount`, etc.). Automatically re-runs validation.
-
-- `POST /{id}/status`  
-  Updates review status (`APPROVED`, `REJECTED`, `FLAGGED`, `PENDING_REVIEW`) with audit notes.
-
-- `POST /{id}/reprocess`  
-  Re-runs OCR, AI extraction, and validation pipeline on the stored PDF file.
-
-- `DELETE /{id}`  
-  Deletes invoice, audit history, and associated file.
-
-- `GET /{id}/file`  
-  Streams original uploaded PDF securely.
-
-### Dashboard API (`/api/v1/dashboard`)
-
-- `GET /summary`  
-  Returns aggregate financial KPIs, monthly expenditure volume, top vendor distributions, and recent invoices.
-
-### Reports API (`/api/v1/reports`)
-
-- `GET /export`  
-  Generates and streams a downloadable multi-sheet Excel file (`.xlsx`).  
-  *Query Parameters*: `start_date`, `end_date`, `vendor_name`, `approved_only` (default true).
-
-### Settings API (`/api/v1/settings`)
-
-- `GET /`  
-  Returns configuration health, AI extraction engine status, OCR status, and tolerance parameters without exposing API credentials.
+### Health Probes
+- **Liveness (`/health`)**: Confirms web server responsiveness.
+- **Readiness (`/ready`)**: Performs live `SELECT 1` database query probe to ensure backend can process transactions before receiving traffic.
 
 ---
 
-## 8. Automated Test Suite
+## 7. Running Tests Locally
 
-The project includes an automated test suite executed with `pytest` covering all 12 core scenarios:
-
-1. Valid text-based invoice PDF extraction.
-2. Scanned invoice PDF detection and OCR fallback.
-3. Invalid and corrupted PDF handling.
-4. Empty PDF handling (0 bytes / 0 pages).
-5. Missing invoice number validation and human-review flagging.
-6. Incorrect total amount calculation and discrepancy warning.
-7. Accidental duplicate upload prevention (SHA-256 hash detection).
-8. External Gemini AI extraction failure resilience and fallback.
-9. Database connection resilience.
-10. Multi-sheet Excel expense report generation.
-11. Invoice correction and approval workflow.
-12. Multi-field search and query filtering.
-
-### Running Backend Tests
 ```bash
-# Windows Powershell:
-$env:PYTHONPATH="."; .\venv\Scripts\python -m pytest backend/tests/ -v
+# Run 14 pytest scenarios with coverage report
+$env:PYTHONPATH="."; .\venv\Scripts\python -m pytest backend/tests/ -v --cov=backend/app --cov-report=term
 
-# Linux/macOS:
-PYTHONPATH=. pytest backend/tests/ -v
-```
-
-### Running End-to-End Workflow Verification
-```bash
-python verify_end_to_end.py
-```
-
-### Testing Frontend Build
-```bash
-cd frontend
-npm run build
+# Verify End-to-End Business Automation
+$env:PYTHONPATH="."; .\venv\Scripts\python verify_end_to_end.py
 ```
 
 ---
 
-## 9. License
+## 8. Documentation Index
 
-MIT License. Designed and architected for enterprise business automation.
-
+- [docs/DEVOPS_SETUP.md](docs/DEVOPS_SETUP.md) &mdash; Detailed setup instructions for Jenkins, SonarQube, Trivy, Prometheus, and Grafana on Windows/Docker.
+- [docs/CI_CD_WORKFLOW.md](docs/CI_CD_WORKFLOW.md) &mdash; Branching strategy, webhook configuration, pipeline walkthrough, and disaster recovery.
