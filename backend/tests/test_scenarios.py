@@ -270,3 +270,24 @@ def test_scenario_12_search_and_filtering(client):
     for item in r_filter.json()["items"]:
         assert item["total_amount"] >= 1000.0
 
+# ============================================================================
+# Scenario 13: Prometheus metrics endpoint
+# ============================================================================
+def test_scenario_13_metrics_endpoint(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "http_requests" in response.text or "process_cpu_seconds" in response.text
+
+# ============================================================================
+# Scenario 14: Liveness and Readiness health endpoints
+# ============================================================================
+def test_scenario_14_health_and_readiness_endpoints(client):
+    r_health = client.get("/health")
+    assert r_health.status_code == 200
+    assert r_health.json()["status"] == "healthy"
+
+    r_ready = client.get("/ready")
+    assert r_ready.status_code == 200
+    assert r_ready.json()["status"] == "ready"
+    assert r_ready.json()["database"] == "connected"
+
