@@ -105,6 +105,30 @@ Navigate to **Manage Jenkins &rarr; Credentials &rarr; System &rarr; Global cred
 6. Script Path: `Jenkinsfile`
 7. Click **Save** &rarr; **Build Now**.
 
+### F. Native Windows Jenkins Agent & Service Configuration
+When Jenkins runs natively on Windows (e.g., as a Windows Service under account `jenkins-svc` at `C:\Users\jenkins-svc\AppData\Local\Jenkins\.jenkins\workspace\Invoice-Expense-Processing`):
+
+#### 1. Why Native Windows Failed with `CreateProcess error=2`
+The initial pipeline failed with `Cannot run program "sh": CreateProcess error=2` because the `Jenkinsfile` invoked Linux shell steps (`sh`). On a native Windows host, `sh.exe` is not natively installed or in system PATH. The pipeline has been updated to use native Windows `powershell` steps.
+
+#### 2. Windows Host Tool Prerequisites for `jenkins-svc`
+Ensure the following tools are installed and present in the system-wide `PATH` (accessible by the `jenkins-svc` service user):
+
+| Tool | Recommended Version | Verification Command | Notes for Windows Service |
+|---|---|---|---|
+| **Python** | 3.11+ (64-bit) | `python --version` | Install for All Users (`C:\Program Files\Python311`); add Python and Scripts to System PATH. |
+| **Node.js & npm** | 18+ LTS | `node --version`, `npm --version` | Ensure `npm` and `node` are in System PATH. |
+| **Docker Desktop** | Latest (WSL 2 backend) | `docker --version`, `docker compose version` | **Critical**: The service account `jenkins-svc` must belong to the `docker-users` group: `net localgroup docker-users jenkins-svc /add`. |
+| **Trivy** | Latest | `trivy --version` | Install via `winget install aqua:trivy` or `choco install trivy` or copy `trivy.exe` to system PATH. |
+| **SonarQube Scanner** | 5.0+ | `sonar-scanner.bat -v` | Download Windows CLI zip from SonarSource, extract to `C:\sonar-scanner`, and add `C:\sonar-scanner\bin` to System PATH. |
+| **Git for Windows** | 2.40+ | `git --version` | Required for Jenkins Git plugin SCM checkout. |
+
+#### 3. Restarting Jenkins Service After PATH Updates
+Windows services do not dynamically inherit system PATH changes made after the service starts. After installing the tools above, restart the Jenkins service in an elevated PowerShell prompt:
+```powershell
+Restart-Service jenkins
+```
+
 ---
 
 ## 5. SonarQube Setup & Quality Gate

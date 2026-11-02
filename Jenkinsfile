@@ -42,14 +42,56 @@ pipeline {
         // ====================================================================
         stage('Environment Validation') {
             steps {
-                echo "--> [Stage 2] Validating host environment and runtime tools..."
-                sh '''
-                    python3 --version || python --version
-                    node --version
-                    npm --version
-                    docker --version
+                echo "--> [Stage 2] Validating Windows host environment and runtime tools..."
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+                    Write-Host "=== Validating Windows Runtime Environment for Jenkins Agent ==="
+
+                    # 1. Python Validation
+                    $py = Get-Command python -ErrorAction SilentlyContinue
+                    if (-not $py) {
+                        $py = Get-Command py -ErrorAction SilentlyContinue
+                    }
+                    if (-not $py) {
+                        throw "PREREQUISITE ERROR: 'python' is not installed or not in PATH for the Jenkins service account (jenkins-svc). Please install Python 3.11+ on Windows and add its install and Scripts directories to the system PATH."
+                    }
+                    Write-Host "Python detected: $(& $py.Source --version)"
+
+                    # 2. Node.js Validation
+                    $node = Get-Command node -ErrorAction SilentlyContinue
+                    if (-not $node) {
+                        throw "PREREQUISITE ERROR: 'node' is not installed or not in PATH for the Jenkins service account. Please install Node.js 18+ on Windows and add it to system PATH."
+                    }
+                    Write-Host "Node.js detected: $(node --version)"
+
+                    # 3. npm Validation
+                    $npm = Get-Command npm -ErrorAction SilentlyContinue
+                    if (-not $npm) {
+                        throw "PREREQUISITE ERROR: 'npm' is not installed or not in PATH for the Jenkins service account. Please ensure npm is in system PATH."
+                    }
+                    Write-Host "npm detected: $(npm --version)"
+
+                    # 4. Docker CLI Validation
+                    $docker = Get-Command docker -ErrorAction SilentlyContinue
+                    if (-not $docker) {
+                        throw "PREREQUISITE ERROR: 'docker' is not installed or not in PATH. Please install Docker Desktop (or Docker Engine CLI) on Windows and add it to system PATH."
+                    }
+                    Write-Host "Docker CLI detected: $(docker --version)"
+
+                    # 5. Docker Daemon Connectivity Check
+                    docker info > $null 2>&1
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "PREREQUISITE ERROR: Docker daemon is not running or the Jenkins service account ('jenkins-svc') lacks permission to access the Docker pipe (npipe:////./pipe/docker_engine). Ensure Docker Desktop is running with Linux containers and add 'jenkins-svc' to the 'docker-users' local Windows group."
+                    }
+                    Write-Host "Docker daemon connectivity verified."
+
+                    # 6. Docker Compose Validation
                     docker compose version
-                    echo "Environment pre-flight validation completed successfully."
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "PREREQUISITE ERROR: 'docker compose' is not available. Please verify Docker Compose plugin is installed."
+                    }
+
+                    Write-Host "Windows host environment pre-flight validation completed successfully."
                 '''
             }
         }
@@ -60,11 +102,30 @@ pipeline {
         stage('Backend Dependency Installation') {
             steps {
                 echo "--> [Stage 3] Installing Python dependencies in isolated virtual environment..."
-                sh '''
-                    python3 -m venv venv || python -m venv venv
-                    . venv/bin/activate || . venv/Scripts/activate
-                    pip install --upgrade pip
-                    pip install -r backend/requirements.txt
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+                    Write-Host "Setting up Python virtual environment..."
+                    if (-not (Test-Path "venv")) {
+                        python -m venv venv
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Failed to create Python virtual environment 'venv'. Verify python-venv is available."
+                        }
+                    }
+
+                    $venvPython = Join-Path (Get-Location).Path "venv\Scripts\python.exe"
+                    if (-not (Test-Path $venvPython)) {
+                        throw "Virtual environment python executable not found at: $venvPython"
+                    }
+
+                    Write-Host "Upgrading pip in venv..."
+                    & $venvPython -m pip install --upgrade pip
+                    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed with exit code $LASTEXITCODE" }
+
+                    Write-Host "Installing requirements from backend/requirements.txt..."
+                    & $venvPython -m pip install -r backend/requirements.txt
+                    if ($LASTEXITCODE -ne 0) { throw "Backend dependency installation failed with exit code $LASTEXITCODE" }
+
+                    Write-Host "Backend dependencies successfully installed."
                 '''
             }
         }
@@ -75,9 +136,25 @@ pipeline {
         stage('Frontend Dependency Installation') {
             steps {
                 echo "--> [Stage 4] Installing Node.js frontend dependencies..."
-                sh '''
-                    cd frontend
-                    npm ci || npm install
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+                    Set-Location frontend
+
+                    if (Test-Path "package-lock.json") {
+                        Write-Host "Running npm ci for deterministic dependency installation..."
+                        npm ci
+                        if ($LASTEXITCODE -ne 0) {
+                            Write-Warning "npm ci exited with code $LASTEXITCODE; attempting npm install fallback..."
+                            npm install
+                            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+                        }
+                    } else {
+                        Write-Host "Running npm install..."
+                        npm install
+                        if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+                    }
+
+                    Write-Host "Frontend dependencies successfully installed."
                 '''
             }
         }
@@ -88,10 +165,17 @@ pipeline {
         stage('Backend Automated Tests') {
             steps {
                 echo "--> [Stage 5] Executing 14 automated pytest business & security scenarios..."
-                sh '''
-                    . venv/bin/activate || . venv/Scripts/activate
-                    export PYTHONPATH=.
-                    pytest backend/tests/ -v --junitxml=test-results.xml
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+                    $venvPython = Join-Path (Get-Location).Path "venv\Scripts\python.exe"
+                    $env:PYTHONPATH = (Get-Location).Path
+
+                    Write-Host "Executing pytest suite with JUnit XML reporting..."
+                    & $venvPython -m pytest backend/tests/ -v --junitxml=test-results.xml
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "AUTOMATED TEST SUITE FAILED: pytest exited with code $LASTEXITCODE"
+                    }
+                    Write-Host "Backend test suite passed successfully."
                 '''
             }
             post {
@@ -107,9 +191,20 @@ pipeline {
         stage('Frontend Build & Tests') {
             steps {
                 echo "--> [Stage 6] Compiling React Vite production bundle..."
-                sh '''
-                    cd frontend
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+                    Set-Location frontend
+
+                    Write-Host "Building production React distribution..."
                     npm run build
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Frontend build failed with exit code $LASTEXITCODE"
+                    }
+
+                    if (-not (Test-Path "dist")) {
+                        throw "Frontend build did not generate expected 'dist' bundle directory."
+                    }
+                    Write-Host "Frontend compiled successfully."
                 '''
             }
         }
@@ -120,10 +215,21 @@ pipeline {
         stage('Test Coverage Generation') {
             steps {
                 echo "--> [Stage 7] Generating Python test coverage report (coverage.xml)..."
-                sh '''
-                    . venv/bin/activate || . venv/Scripts/activate
-                    export PYTHONPATH=.
-                    pytest backend/tests/ --cov=backend/app --cov-report=xml:coverage.xml --cov-report=term
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+                    $venvPython = Join-Path (Get-Location).Path "venv\Scripts\python.exe"
+                    $env:PYTHONPATH = (Get-Location).Path
+
+                    Write-Host "Generating test coverage with pytest-cov..."
+                    & $venvPython -m pytest backend/tests/ --cov=backend/app --cov-report=xml:coverage.xml --cov-report=term
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Coverage generation failed with exit code $LASTEXITCODE"
+                    }
+
+                    if (-not (Test-Path "coverage.xml")) {
+                        throw "Expected coverage report 'coverage.xml' was not created."
+                    }
+                    Write-Host "Coverage report successfully generated."
                 '''
             }
         }
@@ -135,14 +241,33 @@ pipeline {
             steps {
                 echo "--> [Stage 8] Running SonarQube static analysis scanner..."
                 withSonarQubeEnv(SONAR_SERVER_NAME) {
-                    sh '''
-                        sonar-scanner \
-                            -Dsonar.projectKey=invoice-expense-processing-system \
-                            -Dsonar.projectName="AI-Powered Invoice & Expense Processing System" \
-                            -Dsonar.sources=backend/app,frontend/src \
-                            -Dsonar.tests=backend/tests \
-                            -Dsonar.python.coverage.reportPaths=coverage.xml \
-                            || echo "SonarQube scanner executed or fallback notice logged."
+                    powershell '''
+                        $ErrorActionPreference = 'Stop'
+
+                        # Locate sonar-scanner on Windows
+                        $scanner = Get-Command "sonar-scanner.bat" -ErrorAction SilentlyContinue
+                        if (-not $scanner) {
+                            $scanner = Get-Command "sonar-scanner.cmd" -ErrorAction SilentlyContinue
+                        }
+                        if (-not $scanner) {
+                            $scanner = Get-Command "sonar-scanner" -ErrorAction SilentlyContinue
+                        }
+
+                        if (-not $scanner) {
+                            throw "PREREQUISITE ERROR: SonarScanner ('sonar-scanner.bat') is not installed or not found in system PATH. Please download and install SonarQube Scanner for Windows, add its bin directory to system PATH, and verify SonarQube server connection in Jenkins System Configuration."
+                        }
+
+                        Write-Host "Executing SonarScanner via: $($scanner.Source)"
+                        & $scanner.Source `
+                            "-Dsonar.projectKey=invoice-expense-processing-system" `
+                            "-Dsonar.projectName=AI-Powered Invoice & Expense Processing System" `
+                            "-Dsonar.sources=backend/app,frontend/src" `
+                            "-Dsonar.tests=backend/tests" `
+                            "-Dsonar.python.coverage.reportPaths=coverage.xml"
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "SonarQube analysis failed with exit code $LASTEXITCODE"
+                        }
+                        Write-Host "SonarQube static analysis completed."
                     '''
                 }
             }
@@ -156,15 +281,11 @@ pipeline {
                 echo "--> [Stage 9] Checking SonarQube Quality Gate compliance..."
                 timeout(time: 5, unit: 'MINUTES') {
                     script {
-                        try {
-                            def qg = waitForQualityGate()
-                            if (qg.status != 'OK') {
-                                error "Pipeline aborted: SonarQube Quality Gate failed with status: ${qg.status}"
-                            }
-                            echo "SonarQube Quality Gate passed successfully."
-                        } catch (Exception e) {
-                            echo "Quality Gate check notice: ${e.getMessage()}"
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Pipeline aborted: SonarQube Quality Gate failed with status: ${qg.status}"
                         }
+                        echo "SonarQube Quality Gate passed successfully with status: ${qg.status}."
                     }
                 }
             }
@@ -176,14 +297,28 @@ pipeline {
         stage('Trivy Filesystem Scan') {
             steps {
                 echo "--> [Stage 10] Scanning project repository for secrets and vulnerability exposures..."
-                sh '''
-                    trivy fs \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format table \
-                        --output trivy-fs-report.txt \
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+
+                    $trivy = Get-Command "trivy.exe" -ErrorAction SilentlyContinue
+                    if (-not $trivy) {
+                        $trivy = Get-Command "trivy" -ErrorAction SilentlyContinue
+                    }
+                    if (-not $trivy) {
+                        throw "PREREQUISITE ERROR: 'trivy' is not installed or not in system PATH for the Jenkins service account. Please install Trivy for Windows (e.g., 'choco install trivy' or 'winget install aqua:trivy' or download from https://github.com/aquasecurity/trivy/releases) and add to system PATH."
+                    }
+
+                    Write-Host "Running Trivy filesystem scan on repository..."
+                    & $trivy.Source fs `
+                        --severity HIGH,CRITICAL `
+                        --format table `
+                        --output trivy-fs-report.txt `
                         .
-                    cat trivy-fs-report.txt || true
+
+                    if (Test-Path "trivy-fs-report.txt") {
+                        Get-Content trivy-fs-report.txt | Select-Object -First 50
+                    }
+                    Write-Host "Trivy filesystem scan completed."
                 '''
             }
         }
@@ -194,10 +329,26 @@ pipeline {
         stage('Docker Image Build') {
             steps {
                 echo "--> [Stage 11] Building hardened production container images..."
-                sh """
-                    docker build -t ${DOCKER_HUB_REPO}-backend:${IMAGE_TAG} -f backend/Dockerfile .
-                    docker build -t ${DOCKER_HUB_REPO}-frontend:${IMAGE_TAG} -f frontend/Dockerfile .
-                """
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+
+                    $backendImg = "$($env:DOCKER_HUB_REPO)-backend:$($env:IMAGE_TAG)"
+                    $frontendImg = "$($env:DOCKER_HUB_REPO)-frontend:$($env:IMAGE_TAG)"
+
+                    Write-Host "Building Backend Docker image: $backendImg..."
+                    docker build -t $backendImg -f backend/Dockerfile .
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Backend Docker build failed with exit code $LASTEXITCODE"
+                    }
+
+                    Write-Host "Building Frontend Docker image: $frontendImg..."
+                    docker build -t $frontendImg -f frontend/Dockerfile .
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Frontend Docker build failed with exit code $LASTEXITCODE"
+                    }
+
+                    Write-Host "Docker images built successfully."
+                '''
             }
         }
 
@@ -207,21 +358,43 @@ pipeline {
         stage('Trivy Container Image Scan') {
             steps {
                 echo "--> [Stage 12] Scanning container images with Trivy..."
-                sh """
-                    echo "Scanning Backend Image..."
-                    trivy image \
-                        --severity ${TRIVY_SEVERITY_FAIL} \
-                        --exit-code 0 \
-                        --format table \
-                        ${DOCKER_HUB_REPO}-backend:${IMAGE_TAG}
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
 
-                    echo "Scanning Frontend Image..."
-                    trivy image \
-                        --severity ${TRIVY_SEVERITY_FAIL} \
-                        --exit-code 0 \
-                        --format table \
-                        ${DOCKER_HUB_REPO}-frontend:${IMAGE_TAG}
-                """
+                    $trivy = Get-Command "trivy.exe" -ErrorAction SilentlyContinue
+                    if (-not $trivy) {
+                        $trivy = Get-Command "trivy" -ErrorAction SilentlyContinue
+                    }
+                    if (-not $trivy) {
+                        throw "PREREQUISITE ERROR: 'trivy' is not installed or not in system PATH."
+                    }
+
+                    $backendImg = "$($env:DOCKER_HUB_REPO)-backend:$($env:IMAGE_TAG)"
+                    $frontendImg = "$($env:DOCKER_HUB_REPO)-frontend:$($env:IMAGE_TAG)"
+                    $sev = $env:TRIVY_SEVERITY_FAIL
+
+                    Write-Host "Scanning Backend Image ($backendImg) with threshold $sev..."
+                    & $trivy.Source image `
+                        --severity $sev `
+                        --exit-code 1 `
+                        --format table `
+                        $backendImg
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "SECURITY GATE FAILURE: Critical vulnerabilities detected in backend container image. Push aborted."
+                    }
+
+                    Write-Host "Scanning Frontend Image ($frontendImg) with threshold $sev..."
+                    & $trivy.Source image `
+                        --severity $sev `
+                        --exit-code 1 `
+                        --format table `
+                        $frontendImg
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "SECURITY GATE FAILURE: Critical vulnerabilities detected in frontend container image. Push aborted."
+                    }
+
+                    Write-Host "Container images passed Trivy security gate."
+                '''
             }
         }
 
@@ -231,10 +404,24 @@ pipeline {
         stage('Docker Image Tagging') {
             steps {
                 echo "--> [Stage 13] Applying release tags (latest and semantic build)..."
-                sh """
-                    docker tag ${DOCKER_HUB_REPO}-backend:${IMAGE_TAG} ${DOCKER_HUB_REPO}-backend:latest
-                    docker tag ${DOCKER_HUB_REPO}-frontend:${IMAGE_TAG} ${DOCKER_HUB_REPO}-frontend:latest
-                """
+                powershell '''
+                    $ErrorActionPreference = 'Stop'
+
+                    $backendImg = "$($env:DOCKER_HUB_REPO)-backend:$($env:IMAGE_TAG)"
+                    $frontendImg = "$($env:DOCKER_HUB_REPO)-frontend:$($env:IMAGE_TAG)"
+                    $backendLatest = "$($env:DOCKER_HUB_REPO)-backend:latest"
+                    $frontendLatest = "$($env:DOCKER_HUB_REPO)-frontend:latest"
+
+                    Write-Host "Tagging $backendImg -> $backendLatest..."
+                    docker tag $backendImg $backendLatest
+                    if ($LASTEXITCODE -ne 0) { throw "Docker tag backend failed" }
+
+                    Write-Host "Tagging $frontendImg -> $frontendLatest..."
+                    docker tag $frontendImg $frontendLatest
+                    if ($LASTEXITCODE -ne 0) { throw "Docker tag frontend failed" }
+
+                    Write-Host "Images successfully tagged."
+                '''
             }
         }
 
@@ -255,14 +442,38 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    sh """
-                        echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
-                        docker push ${DOCKER_HUB_REPO}-backend:${IMAGE_TAG}
-                        docker push ${DOCKER_HUB_REPO}-backend:latest
-                        docker push ${DOCKER_HUB_REPO}-frontend:${IMAGE_TAG}
-                        docker push ${DOCKER_HUB_REPO}-frontend:latest
+                    powershell '''
+                        $ErrorActionPreference = 'Stop'
+                        Write-Host "Logging into Docker Hub..."
+                        $env:DOCKER_PASS | docker login -u $env:DOCKER_USER --password-stdin
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Docker login failed. Verify DOCKER_CREDENTIALS_ID in Jenkins credentials store."
+                        }
+
+                        $backendImg = "$($env:DOCKER_HUB_REPO)-backend:$($env:IMAGE_TAG)"
+                        $frontendImg = "$($env:DOCKER_HUB_REPO)-frontend:$($env:IMAGE_TAG)"
+                        $backendLatest = "$($env:DOCKER_HUB_REPO)-backend:latest"
+                        $frontendLatest = "$($env:DOCKER_HUB_REPO)-frontend:latest"
+
+                        Write-Host "Pushing backend image ($backendImg)..."
+                        docker push $backendImg
+                        if ($LASTEXITCODE -ne 0) { throw "Pushing $backendImg failed" }
+
+                        Write-Host "Pushing backend:latest..."
+                        docker push $backendLatest
+                        if ($LASTEXITCODE -ne 0) { throw "Pushing $backendLatest failed" }
+
+                        Write-Host "Pushing frontend image ($frontendImg)..."
+                        docker push $frontendImg
+                        if ($LASTEXITCODE -ne 0) { throw "Pushing $frontendImg failed" }
+
+                        Write-Host "Pushing frontend:latest..."
+                        docker push $frontendLatest
+                        if ($LASTEXITCODE -ne 0) { throw "Pushing $frontendLatest failed" }
+
+                        Write-Host "Logging out of Docker Hub..."
                         docker logout
-                    """
+                    '''
                 }
             }
         }
@@ -279,9 +490,14 @@ pipeline {
                     }
                     steps {
                         echo "--> [Stage 15A] Deploying feature branch to Staging environment..."
-                        sh '''
+                        powershell '''
+                            $ErrorActionPreference = 'Stop'
+                            Write-Host "Deploying Staging environment via docker-compose.dev.yml..."
                             docker compose -f docker-compose.dev.yml up -d --build
-                            echo "Staging environment deployed and running."
+                            if ($LASTEXITCODE -ne 0) {
+                                throw "Staging docker compose deployment failed with exit code $LASTEXITCODE"
+                            }
+                            Write-Host "Staging environment deployed and running."
                         '''
                     }
                 }
@@ -298,11 +514,35 @@ pipeline {
                                   ok: "Deploy to Production"
                         }
                         echo "Gate approved. Deploying to Production cluster..."
-                        sh '''
+                        powershell '''
+                            $ErrorActionPreference = 'Stop'
+                            Write-Host "Deploying Production stack via docker-compose.yml..."
                             docker compose -f docker-compose.yml up -d --build
-                            echo "Verifying production health check..."
-                            curl -f http://localhost:8000/health || exit 1
-                            echo "Production deployment verified and active!"
+                            if ($LASTEXITCODE -ne 0) {
+                                throw "Production docker compose deployment failed with exit code $LASTEXITCODE"
+                            }
+
+                            Write-Host "Verifying production health check on http://localhost:8000/health..."
+                            $maxRetries = 15
+                            $healthy = $false
+                            for ($i = 1; $i -le $maxRetries; $i++) {
+                                try {
+                                    $response = Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get -TimeoutSec 5 -ErrorAction Stop
+                                    if ($response.status -eq "ok" -or $response.status -eq "healthy") {
+                                        Write-Host "Health check response: $($response | ConvertTo-Json -Compress)"
+                                        $healthy = $true
+                                        break
+                                    }
+                                } catch {
+                                    Write-Host "Attempt $i of $maxRetries - service not ready yet ($($_.Exception.Message)). Waiting 3 seconds..."
+                                    Start-Sleep -Seconds 3
+                                }
+                            }
+
+                            if (-not $healthy) {
+                                throw "HEALTH CHECK FAILED: http://localhost:8000/health did not return healthy status within $($maxRetries * 3) seconds."
+                            }
+                            Write-Host "Production deployment verified and active!"
                         '''
                     }
                 }
